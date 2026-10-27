@@ -1,4 +1,7 @@
 const REGION_LABELS = {
+  usa: "USA",
+  canada: "Canada",
+  uk: "United Kingdom",
   denmark: "Denmark",
   netherlands: "Netherlands",
   switzerland: "Switzerland",
@@ -9,10 +12,13 @@ const REGION_LABELS = {
   australia: "Australia",
   dubai: "UAE",
   singapore: "Singapore",
-  india: "APAC",
+  india: "India",
 }
 
 const REGIONS = {
+  usa: ["usa"],
+  canada: ["canada"],
+  uk: ["uk"],
   denmark: ["denmark"],
   netherlands: ["netherlands"],
   switzerland: ["switzerland"],
@@ -23,27 +29,47 @@ const REGIONS = {
   australia: ["australia"],
   dubai: ["united-arab-emirates"],
   singapore: ["singapore"],
-  // The public API does not currently list India as a separate geography.
-  // APAC eligibility is shown as APAC; it is never relabeled as India.
-  india: ["apac"],
+  india: ["india"],
 }
 
-const RELEVANCE_TERMS = [
+const SPECIALTY_TERMS = [
   "bioinformatics", "computational biology", "computational genomics",
-  "genomics", "genomic", "biotech", "biotechnology", "life science",
-  "life sciences", "molecular biology", "omics", "transcriptomics",
-  "proteomics", "clinical informatics", "biomedical data",
+  "genomics", "genomic medicine", "systems biology", "systems pharmacology",
+  "drug discovery", "drug development", "cheminformatics", "biostatistics",
+  "biomedical informatics", "clinical informatics", "molecular biology",
+  "transcriptomics", "proteomics", "single-cell", "multi-omics", "multiomics",
+  "precision medicine", "life sciences", "life science", "biotechnology",
+  "biotech", "biopharma", "pharmaceutical", "therapeutics", "clinical research",
 ]
-
+const ADJACENT_ROLE_TERMS = [
+  "research", "scientist", "associate", "lab", "laboratory", "software",
+  "engineer", "developer", "data analyst", "data scientist", "machine learning",
+  "researcher", "technologist", "informatics", "scientific computing",
+]
 const LEVER_BOARDS = [
-  { site: "advancell", company: "AdvanCell", regions: ["australia"] },
-  { site: "transmutex", company: "Transmutex", regions: ["switzerland"] },
-  { site: "xilis", company: "Xilis", regions: ["netherlands"] },
-  { site: "recursionpharma", company: "Recursion Pharmaceuticals", regions: ["all"] },
+  { site: "advancell", company: "AdvanCell" },
+  { site: "transmutex", company: "Transmutex" },
+  { site: "pillarbiosciences", company: "Pillar Biosciences" },
+  { site: "mammothbiosci", company: "Mammoth Biosciences" },
 ]
 
 const GREENHOUSE_BOARDS = [
-  { token: "10xgenomics", company: "10x Genomics", regions: ["all"] },
+  { token: "freenome", company: "Freenome" },
+  { token: "ginkgobioworks", company: "Ginkgo Bioworks" },
+  { token: "twistbioscience", company: "Twist Bioscience" },
+  { token: "beamtherapeutics", company: "Beam Therapeutics" },
+  { token: "natera", company: "Natera" },
+  { token: "adaptivebiotechnologies", company: "Adaptive Biotechnologies" },
+]
+const ASHBY_BOARDS = [
+  { slug: "benchling", company: "Benchling" }, { slug: "insitro", company: "insitro" },
+  { slug: "formbio", company: "Form Bio" }, { slug: "owkin", company: "Owkin" },
+  { slug: "inductive-bio", company: "Inductive Bio" },
+  { slug: "iambic-therapeutics", company: "Iambic Therapeutics" }, { slug: "onyx-bio", company: "Onyx Bio" },
+  { slug: "imubiosciences", company: "IMU Biosciences" }, { slug: "basecamp-research", company: "Basecamp Research" },
+  { slug: "seqera.io", company: "Seqera" }, { slug: "adaptyv", company: "Adaptyv" },
+  { slug: "proxima", company: "Proxima" }, { slug: "orakloncology", company: "Orakl Oncology" },
+  { slug: "AI-bio", company: "Stealth AI x Bio" }, { slug: "cradlebio", company: "Cradle" },
 ]
 
 function cleanText(value, maxLength = 6000) {
@@ -62,55 +88,23 @@ function cleanText(value, maxLength = 6000) {
     .slice(0, maxLength)
 }
 
-function safeListingUrl(value) {
-  try {
-    const url = new URL(value)
-    if (url.protocol !== "https:") return null
-    if (url.hostname !== "jobicy.com" && !url.hostname.endsWith(".jobicy.com")) return null
-    return url.href
-  } catch {
-    return null
-  }
-}
-
-async function fetchGeo(geo) {
-  const jobs = []
-  let cursor = null
-  let page = 0
-  do {
-    const url = new URL("https://jobicy.com/api/jobs")
-    url.searchParams.set("geo", geo)
-    url.searchParams.set("count", "200")
-    if (cursor) url.searchParams.set("cursor", cursor)
-
-    const response = await fetch(url, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(6000),
-    })
-    if (!response.ok) throw new Error(`Job feed returned HTTP ${response.status}`)
-    const payload = await response.json()
-    if (payload.success === false || !Array.isArray(payload.jobs)) {
-      throw new Error("Job feed returned an unexpected response")
-    }
-    jobs.push(...payload.jobs)
-    cursor = payload.nextCursor || null
-    page += 1
-  } while (cursor && page < 3)
-
-  return { jobs, truncated: Boolean(cursor) }
-}
-
 function isRelevant(job) {
-  const text = `${job.jobTitle || ""} ${job.jobIndustry || ""} ${job.jobExcerpt || ""} ${job.jobDescription || ""}`.toLowerCase()
-  return RELEVANCE_TERMS.some(term => text.includes(term))
+  const title = String(job.jobTitle || job.title || "").toLowerCase()
+  if (/\b(senior|staff|principal|director|vice president|chief|head of|team lead)\b/.test(title)) return false
+  const context = `${job.jobIndustry || ""} ${job.jobExcerpt || ""} ${job.jobDescription || ""} ${job.categories || ""} ${job.department || ""} ${job.team || ""}`.toLowerCase()
+  if (SPECIALTY_TERMS.some(term => title.includes(term))) return true
+  return SPECIALTY_TERMS.some(term => context.includes(term)) && ADJACENT_ROLE_TERMS.some(term => title.includes(term))
 }
 
 function matchesRegion(text, region) {
   const value = String(text || "").toLowerCase()
+  if (region === "all" && /\b(remote|worldwide|anywhere|global)\b/.test(value)) return true
   if (region === "all") return Object.keys(REGION_LABELS).some(key => matchesRegion(value, key))
   const aliases = {
+    usa: ["united states", "usa", "u.s.", "remote - us", "remote - usa", ", ca", ", ma", ", ny", ", wa", ", nc", ", nj", ", tx", ", md", ", pa", ", il", ", co", ", va", ", az", ", mn", ", ga", ", mi", ", or", ", ut", ", wi", ", ct", ", dc", ", ri", ", ks", ", ky", ", la", ", me", ", mo", ", mt", ", ne", ", nv", ", nh", ", nm", ", nd", ", oh", ", ok", ", sc", ", sd", ", tn", ", vt", ", wv", ", wy", ", de", ", hi", ", id", ", ia", ", al", ", ak", ", ar", ", fl", ", ms"],
+    canada: ["canada", "toronto", "vancouver", "montreal", "ottawa"],
+    uk: ["united kingdom", "great britain", "england", "scotland", "wales", "london", "oxford", "cambridge"],
     dubai: ["uae", "united arab emirates", "dubai", "abu dhabi"],
-    india: ["india", "mumbai", "bengaluru", "bangalore", "hyderabad", "pune", "chennai", "new delhi"],
     australia: ["australia", "sydney", "melbourne", "brisbane", "perth", "adelaide"],
     denmark: ["denmark", "copenhagen", "aarhus"],
     netherlands: ["netherlands", "amsterdam", "utrecht", "leiden", "rotterdam"],
@@ -118,8 +112,9 @@ function matchesRegion(text, region) {
     portugal: ["portugal", "lisbon", "porto"],
     norway: ["norway", "oslo", "bergen"],
     sweden: ["sweden", "stockholm", "gothenburg", "malmö"],
-    france: ["france", "paris", "lyon", "marseille", "toulouse"],
+    france: ["france", "paris", "lyon", "marseille", "toulouse", "villejuif"],
     singapore: ["singapore"],
+    india: ["india", "mumbai", "bengaluru", "bangalore", "hyderabad", "pune", "chennai", "new delhi"],
   }
   return (aliases[region] || [region]).some(alias => value.includes(alias))
 }
@@ -136,12 +131,16 @@ function toLeverListing(job, company) {
     company,
     location: cleanText(categories.location || (categories.allLocations || []).join(", "), 120),
     seniority: "unknown",
+    work_mode: inferWorkMode(job.workplaceType, job.descriptionPlain),
     remote_ok: job.workplaceType === "remote",
     salary_min: Number(salary.min) || null,
     salary_max: Number(salary.max) || null,
+    currency: cleanText(salary.currency, 3) || null,
+    work_type: cleanText(categories.commitment, 80) || "",
     posted_at: job.createdAt ? new Date(job.createdAt).toISOString() : null,
+    summary: cleanText(job.openingPlain || job.descriptionPlain, 900),
     source_url: sourceUrl,
-    source_name: "Lever",
+    source_name: `${company} Careers`,
     fit_score: null,
     gap_report: {},
   }
@@ -158,11 +157,29 @@ function safeCompanyUrl(value) {
   }
 }
 
+function normalizeWorkMode(value) {
+  const mode = String(value || "").toLowerCase()
+  if (mode.includes("hybrid")) return "Hybrid"
+  if (mode.includes("remote")) return "Remote"
+  if (mode.includes("on-site") || mode.includes("onsite") || mode.includes("on site")) return "On-site"
+  return "Not specified"
+}
+
+function inferWorkMode(value, description = "") {
+  const known = normalizeWorkMode(value)
+  if (known !== "Not specified") return known
+  const text = cleanText(description, 6000).toLowerCase()
+  if (/\b(hybrid (role|position|schedule|work)|in-person hybrid|#li-hybrid)\b/.test(text)) return "Hybrid"
+  if (/\b(on-site (role|position|work)|onsite (role|position|work)|in-office (role|position|schedule))\b/.test(text)) return "On-site"
+  if (/\b(fully remote|remote-first|remote position|remote role|work remotely)\b/.test(text)) return "Remote"
+  return "Not specified"
+}
+
 function safeExternalListing(value) {
   try {
     const url = new URL(value)
     if (url.protocol !== "https:") return false
-    return ["jobicy.com", "jobs.lever.co", "jobs.eu.lever.co", "boards.greenhouse.io", "job-boards.greenhouse.io"].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))
+    return ["jobs.lever.co", "jobs.eu.lever.co", "boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.ashbyhq.com"].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))
   } catch {
     return false
   }
@@ -188,30 +205,13 @@ async function fetchGreenhouse(board) {
   return payload.jobs.map(job => ({ job, company: board.company }))
 }
 
-function toPublicListing(job, geo) {
-  const sourceUrl = safeListingUrl(job.url)
-  const title = cleanText(job.jobTitle, 180)
-  const company = cleanText(job.companyName, 140)
-  if (!sourceUrl || !title || !company) return null
-
-  const rawSalary = Number(job.salaryMin) || Number(job.salaryMax) || null
-  const hourly = /hour/i.test(job.salaryPeriod || "")
-  return {
-    id: `jobicy-${job.id}`,
-    title,
-    company,
-    location: cleanText(job.jobGeo, 120) || REGION_LABELS[geo],
-    seniority: cleanText(job.jobLevel, 40).toLowerCase() || "unknown",
-    remote_ok: true,
-    salary_min: hourly && rawSalary && rawSalary > 1000 ? Math.round(rawSalary / 2080) : (Number(job.salaryMin) || null),
-    salary_max: hourly && Number(job.salaryMax) > 1000 ? Math.round(Number(job.salaryMax) / 2080) : (Number(job.salaryMax) || null),
-    posted_at: job.pubDate || null,
-    scraped_at: new Date().toISOString(),
-    source_url: sourceUrl,
-    source_name: "Jobicy",
-    fit_score: null,
-    gap_report: {},
-  }
+async function fetchAshby(board) {
+  const url = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(board.slug)}?includeCompensation=true`
+  const response = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(6000) })
+  if (!response.ok) throw new Error(`Ashby feed returned HTTP ${response.status}`)
+  const payload = await response.json()
+  if (!Array.isArray(payload.jobs)) throw new Error("Ashby feed returned an unexpected response")
+  return payload.jobs.map(job => ({ job, company: board.company }))
 }
 
 export default async function handler(req, res) {
@@ -229,16 +229,8 @@ export default async function handler(req, res) {
   res.setHeader("X-Content-Type-Options", "nosniff")
   res.setHeader("Referrer-Policy", "no-referrer")
 
-  const selected = requestedGeo === "all" ? Object.keys(REGIONS) : [requestedGeo]
-  const geoRequests = [...new Set(selected.flatMap(region => REGIONS[region]))]
-  const boards = requestedGeo === "all"
-    ? [...LEVER_BOARDS, ...GREENHOUSE_BOARDS]
-    : [...LEVER_BOARDS.filter(board => board.regions.includes(requestedGeo) || board.regions.includes("all")), ...GREENHOUSE_BOARDS.filter(board => board.regions.includes(requestedGeo) || board.regions.includes("all"))]
+  const boards = [...LEVER_BOARDS, ...GREENHOUSE_BOARDS]
   const sources = [
-    ...geoRequests.map(geo => ({ key: geo, fetch: async () => {
-      const result = await fetchGeo(geo)
-      return { items: result.jobs, truncated: result.truncated }
-    }, map: (job, region) => toPublicListing(job, region) })),
     ...boards.map(board => ({ key: `company:${board.site || board.token}`, fetch: () => board.site ? fetchLever(board) : fetchGreenhouse(board), map: (item, region) => {
       const job = item.job || item
       const text = `${job.text || job.title || ""} ${job.descriptionPlain || job.content || ""} ${(job.categories || {}).location || (job.location || {}).name || ""}`
@@ -247,18 +239,43 @@ export default async function handler(req, res) {
       if (region === "all" && !matchesRegion((job.categories || {}).location || (job.location || {}).name, "all")) return null
       const mapped = board.site ? toLeverListing(job, item.company) : {
         id: `greenhouse-${job.id}`, title: cleanText(job.title, 180), company: item.company,
-        location: cleanText((job.location || {}).name, 120), seniority: "unknown", remote_ok: /remote/i.test((job.location || {}).name || ""),
+        location: cleanText((job.location || {}).name, 120), seniority: "unknown", work_mode: inferWorkMode((job.location || {}).name, job.content), remote_ok: /remote/i.test((job.location || {}).name || ""),
+        work_type: "",
         salary_min: null, salary_max: null, posted_at: job.first_published_at || null,
-        source_url: job.absolute_url, source_name: "Greenhouse", fit_score: null, gap_report: {},
+        summary: cleanText(job.content, 900),
+        source_url: job.absolute_url, source_name: `${item.company} Careers`, fit_score: null, gap_report: {},
       }
       if (!mapped || !safeExternalListing(mapped.source_url)) return null
       return mapped
+    } })),
+    ...ASHBY_BOARDS.map(board => ({ key: `company:${board.slug}`, fetch: () => fetchAshby(board), map: (item, region) => {
+      const job = item.job || item
+      const context = `${job.descriptionPlain || ""} ${job.department || ""} ${job.team || ""}`
+      if (!isRelevant({ title: job.title, jobDescription: context })) return null
+      const location = `${job.location || ""} ${(job.secondaryLocations || []).map(place => place.location).join(" ")}`
+      if (region !== "all" && !matchesRegion(location, region)) return null
+      if (region === "all" && !matchesRegion(location, "all")) return null
+      const sourceUrl = job.jobUrl
+      if (!safeExternalListing(sourceUrl)) return null
+      return {
+        id: `ashby-${job.id}`, title: cleanText(job.title, 180), company: item.company,
+        location: cleanText(location, 160) || "Location not listed", seniority: "unknown",
+        work_mode: inferWorkMode(job.workplaceType || (job.isRemote ? "Remote" : ""), job.descriptionPlain),
+        remote_ok: Boolean(job.isRemote) || /remote/i.test(job.workplaceType || ""),
+        work_type: cleanText(job.employmentType, 80),
+        salary_min: Number(job.compensation?.minValue) || null,
+        salary_max: Number(job.compensation?.maxValue) || null,
+        currency: cleanText(job.compensation?.currency, 3) || null,
+        posted_at: job.publishedAt || null,
+        summary: cleanText(job.descriptionPlain, 900), source_url: sourceUrl,
+        source_name: `${item.company} Careers`, fit_score: null, gap_report: {},
+      }
     } })),
   ]
 
   const results = new Array(sources.length)
   let nextIndex = 0
-  await Promise.all(Array.from({ length: Math.min(4, sources.length) }, async () => {
+  await Promise.all(Array.from({ length: Math.min(8, sources.length) }, async () => {
     while (nextIndex < sources.length) {
       const index = nextIndex++
       const source = sources[index]
@@ -284,11 +301,12 @@ export default async function handler(req, res) {
     if (result.value.truncated) truncated = true
     for (const item of result.value.items) {
       const job = item.job || item
-      if (!sources[i].key.startsWith("company:") && !isRelevant(job)) continue
-      const geo = sourceKey.startsWith("company:") ? requestedGeo : sourceKey
-      const region = selected.find(key => REGIONS[key].includes(geo)) || requestedGeo
-      const normalized = result.value.map(item, region)
-      if (normalized) jobsByUrl.set(normalized.source_url, normalized)
+      const normalized = result.value.map(item, requestedGeo)
+      if (normalized) {
+        const context = `${job.jobTitle || job.text || job.title || ""} ${job.jobIndustry || ""} ${job.jobExcerpt || job.excerpt || ""} ${job.jobDescription || job.descriptionPlain || job.description || job.content || ""} ${job.categories || ""} ${job.department || ""} ${job.team || ""}`.toLowerCase()
+        normalized.search_terms = [...SPECIALTY_TERMS, ...ADJACENT_ROLE_TERMS].filter(term => context.includes(term))
+        jobsByUrl.set(normalized.source_url, normalized)
+      }
     }
   }
 
@@ -301,16 +319,16 @@ export default async function handler(req, res) {
   if (failedFeeds.length && !jobs.length) {
     res.setHeader("Cache-Control", "no-store")
     res.setHeader("Retry-After", "3600")
-    return res.status(503).json({ error: "The public job feed is temporarily unavailable." })
+    return res.status(503).json({ error: "The employer career portals are temporarily unavailable." })
   }
 
   res.setHeader("Cache-Control", "public, s-maxage=21600, stale-while-revalidate=86400")
   return res.status(200).json({
     jobs,
-    source: "Jobicy, Lever, and Greenhouse public job APIs",
-    source_url: "https://jobicy.com/jobs-rss-feed",
+    source: "Direct employer career portals hosted on Lever, Greenhouse, and Ashby",
+
     refreshed_at: new Date().toISOString(),
-    failed_regions: failedFeeds,
+    failed_sources: failedFeeds,
     partial: failedFeeds.length > 0 || truncated,
   })
 }
